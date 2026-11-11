@@ -1,4 +1,4 @@
-# Fetcher sidecar: Scrapling stealth browser. Large image (browser + deps).
+# Fetcher sidecar: Scrapling stealth browser (Patchright/Chromium). Large image.
 FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
@@ -8,7 +8,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 COPY pyproject.toml ./
-RUN pip install "scrapling[fetchers]==0.5.1" \
+# libatomic1: needed by Playwright's bundled Node driver, missing in -slim.
+# `scrapling install` then pulls the browser and its system dependencies.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libatomic1 \
+ && pip install "scrapling[fetchers]==0.5.1" \
  && scrapling install \
  && mkdir -p /opt/cache /opt/ms-playwright \
  && chmod -R a+rX /opt/cache /opt/ms-playwright \

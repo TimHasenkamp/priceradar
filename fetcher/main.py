@@ -1,6 +1,6 @@
 """PriceRadar fetcher sidecar.
 
-Renders a URL in Scrapling's stealth browser (Camoufox) and returns the HTML.
+Renders a URL in Scrapling's stealth browser (Patchright/Chromium) and returns the HTML.
 It deliberately contains no shop logic: parsing happens in the Go backend.
 
 API:

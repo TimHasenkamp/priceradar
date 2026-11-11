@@ -5,7 +5,7 @@ Self-hosted price tracker for otto.de. It checks product prices at a fixed inter
 ```
 ┌──────────┐  /api/* (Proxy)  ┌──────────────┐  POST /fetch  ┌───────────────────┐
 │ web      │ ───────────────▶ │ backend (Go) │ ────────────▶ │ fetcher (Python)  │──▶ otto.de
-│ SvelteKit│                  │ API+Scheduler│ ◀──── HTML ── │ Scrapling/Camoufox│
+│ SvelteKit│                  │ API+Scheduler│ ◀──── HTML ── │ Scrapling stealth │
 └──────────┘                  └──────┬───────┘               └───────────────────┘
                                   SQLite (Volume)
 ```
@@ -14,7 +14,7 @@ Self-hosted price tracker for otto.de. It checks product prices at a fixed inter
 |---|---|
 | `web` (SvelteKit, port 3000) | UI. Forwards `/api/*` to the backend, so only one port is exposed |
 | `backend` (Go, port 8080 internal) | REST API ([docs/API.md](docs/API.md)), serial scrape queue, parser, SQLite |
-| `fetcher` (Python, port 8000 internal) | Renders pages in Scrapling's stealth browser and returns HTML only. Contains no shop logic |
+| `fetcher` (Python, port 8000 internal) | Renders pages in Scrapling's stealth browser (Patchright/Chromium) and returns HTML only. Contains no shop logic |
 
 > **Note on otto.de:** otto.de uses the Kasada bot protection. Plain HTTP requests get a JS challenge (HTTP 400). That is why the sidecar uses a stealth browser. This bypasses the bot protection and may violate otto.de's terms of use; that risk is yours. robots.txt allows product pages (`/p/`) and is checked before every request. Requests run strictly one after another, with 15 s + jitter between them by default. If otto.de blocks requests anyway, the product shows a "Blockiert (Bot-Schutz)" badge in the UI.
 
