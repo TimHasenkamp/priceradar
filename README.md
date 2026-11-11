@@ -32,9 +32,11 @@ docker compose up -d
 
 | Image | Platforms |
 |---|---|
-| `ghcr.io/timhasenkamp/priceradar-web` | amd64, arm64 |
-| `ghcr.io/timhasenkamp/priceradar-backend` | amd64, arm64 |
-| `ghcr.io/timhasenkamp/priceradar-fetcher` | amd64 (stealth browser) |
+| `ghcr.io/timhasenkamp/priceradar-web` | arm64 |
+| `ghcr.io/timhasenkamp/priceradar-backend` | arm64 |
+| `ghcr.io/timhasenkamp/priceradar-fetcher` | arm64 |
+
+The images are published for **arm64 only** (e.g. Raspberry Pi, Ampere/Graviton, Apple Silicon). On amd64 hosts, build locally with `docker-compose.build.yml`.
 
 - **Tags:** `latest` (current `main`), `X.Y.Z` / `X.Y` (releases from git tags `vX.Y.Z`), `sha-<commit>`. Pin a version with `PRICERADAR_TAG=0.1.0` in `.env`.
 - **Updating:** `docker compose pull && docker compose up -d`.
