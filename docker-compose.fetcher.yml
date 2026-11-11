@@ -1,0 +1,26 @@
+# Fetcher only, for running it on a different machine than the backend,
+# e.g. at home so shop requests leave from a residential IP instead of a
+# data-center IP (which bot protection like Kasada tends to block).
+#
+# Connect both machines with a private VPN (NetBird, Tailscale, WireGuard)
+# and NEVER expose this port to the internet.
+#
+#   FETCHER_TOKEN=<long random string>   # same value as PR_FETCHER_TOKEN on the backend
+#   FETCHER_BIND=<this machine's VPN IP> # e.g. 100.x.y.z; default 127.0.0.1
+#   docker compose -f docker-compose.fetcher.yml up -d
+#
+# On the backend host set PR_FETCHER_URL=http://<this machine's VPN IP>:8000
+# and PR_FETCHER_TOKEN to the same token.
+services:
+  fetcher:
+    image: ghcr.io/timhasenkamp/priceradar-fetcher:${PRICERADAR_TAG:-latest}
+    container_name: priceradar-fetcher
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      FETCHER_TOKEN: ${FETCHER_TOKEN:?set FETCHER_TOKEN (shared secret with the backend)}
+      FETCHER_ALLOWED_HOSTS: ${FETCHER_ALLOWED_HOSTS:-www.otto.de,otto.de}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      # Bind only to the VPN interface so the fetcher is unreachable from LAN/internet.
+      - "${FETCHER_BIND:-127.0.0.1}:8000:8000"

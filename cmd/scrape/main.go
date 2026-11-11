@@ -37,7 +37,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
-	sidecar := &scraper.SidecarFetcher{BaseURL: *fetcherURL, Timeout: 60 * time.Second, WaitSelector: otto.WaitSelector}
+	sidecar := &scraper.SidecarFetcher{BaseURL: *fetcherURL, Timeout: 60 * time.Second, WaitSelector: otto.WaitSelector, Token: os.Getenv("PR_FETCHER_TOKEN")}
 	fetcher := scraper.NewPolite(sidecar, scraper.NewRobots(*ua, nil, time.Hour), scraper.PoliteConfig{})
 	reg := scraper.NewRegistry(otto.New(fetcher))
 

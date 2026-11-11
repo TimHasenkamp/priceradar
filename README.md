@@ -34,15 +34,36 @@ docker compose up -d
 |---|---|
 | `ghcr.io/timhasenkamp/priceradar-web` | arm64 |
 | `ghcr.io/timhasenkamp/priceradar-backend` | arm64 |
-| `ghcr.io/timhasenkamp/priceradar-fetcher` | arm64 |
+| `ghcr.io/timhasenkamp/priceradar-fetcher` | arm64, amd64 |
 
-The images are published for **arm64 only** (e.g. Raspberry Pi, Ampere/Graviton, Apple Silicon). On amd64 hosts, build locally with `docker-compose.build.yml`.
+Web and backend are published for **arm64 only** (e.g. Raspberry Pi, Ampere/Graviton, Apple Silicon); the fetcher also for amd64 so it can run on a home PC. On amd64 servers, build locally with `docker-compose.build.yml`.
 
 - **Tags:** `latest` (current `main`), `X.Y.Z` / `X.Y` (releases from git tags `vX.Y.Z`), `sha-<commit>`. Pin a version with `PRICERADAR_TAG=0.1.0` in `.env`.
 - **Updating:** `docker compose pull && docker compose up -d`.
 - **Storage:** the database lives in the `priceradar-data` volume. The fetcher image is large, about 1–1.5 GB, because it contains a browser.
 - **Building from source instead:** `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`.
 - **Releases:** `git tag v0.1.0 && git push --tags` runs CI, which builds and pushes all three images ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+
+## Fetcher on a different machine (residential IP)
+
+otto.de's bot protection (Kasada) largely blocks **data-center IPs** such as Hetzner, AWS or Oracle, however good the browser's camouflage. If the backend runs at a hoster, run the fetcher on a machine at home and connect both over a private VPN such as NetBird, Tailscale or WireGuard:
+
+```
+[hoster]  web + backend  ──VPN──▶  [home] fetcher ──▶ otto.de (residential IP)
+```
+
+1. **Home machine:** the fetcher image is available for amd64 and arm64. Generate a secret with `openssl rand -hex 32`, then start the fetcher bound to the VPN IP only:
+   ```bash
+   FETCHER_TOKEN=<secret> FETCHER_BIND=<VPN IP of this machine>      docker compose -f docker-compose.fetcher.yml up -d
+   ```
+2. **Backend host:** remove the `fetcher` service and the backend's `depends_on`, then set:
+   ```
+   PR_FETCHER_URL=http://<VPN IP of the home machine>:8000
+   PR_FETCHER_TOKEN=<same secret>
+   ```
+3. **VPN rules:** allow only backend host → home machine on TCP 8000.
+
+If the home machine is off, checks fail as `transient` and are retried in the next cycle.
 
 ## Local development
 
@@ -87,6 +108,7 @@ All settings are environment variables; see [.env.example](.env.example).
 | `PR_DB_PATH` | `priceradar.db` | SQLite file |
 | `PR_LISTEN_ADDR` | `:8080` | Backend address |
 | `PR_FETCHER_URL` | `http://localhost:8000` | Fetcher sidecar |
+| `PR_FETCHER_TOKEN` | – | Shared secret, sent as `Authorization: Bearer …`. Must match `FETCHER_TOKEN` of the fetcher |
 | `LOG_LEVEL` / `LOG_FORMAT` | `info` / `json` | slog output |
 
 ## How a price is read (otto.de)

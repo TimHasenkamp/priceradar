@@ -21,6 +21,7 @@ type Config struct {
 	RetryBackoff   time.Duration
 	FetcherURL     string
 	FetchTimeout   time.Duration
+	FetcherToken   string
 	UserAgent      string
 	LogLevel       slog.Level
 	LogFormat      string // "json" or "text"
@@ -42,6 +43,7 @@ func Load(getenv func(string) string) (Config, error) {
 		RetryBackoff:   l.dur("PR_RETRY_BACKOFF", 30*time.Second),
 		FetcherURL:     l.str("PR_FETCHER_URL", "http://localhost:8000"),
 		FetchTimeout:   l.dur("PR_FETCH_TIMEOUT", 60*time.Second),
+		FetcherToken:   l.str("PR_FETCHER_TOKEN", ""),
 		UserAgent:      l.str("PR_USER_AGENT", "PriceRadar/0.1 (+self-hosted price tracker)"),
 		LogFormat:      strings.ToLower(l.str("LOG_FORMAT", "json")),
 	}

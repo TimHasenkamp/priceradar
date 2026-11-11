@@ -20,7 +20,7 @@ func TestSidecarFetcher(t *testing.T) {
 	}{
 		{"ok", func(w http.ResponseWriter, r *http.Request) {
 			var req sidecarRequest
-			if r.Method != http.MethodPost || r.URL.Path != "/fetch" || json.NewDecoder(r.Body).Decode(&req) != nil || req.URL != "https://shop.test/p/1" || req.TimeoutMS != 5000 || req.WaitSelector != "main" {
+			if r.Method != http.MethodPost || r.URL.Path != "/fetch" || json.NewDecoder(r.Body).Decode(&req) != nil || req.URL != "https://shop.test/p/1" || req.TimeoutMS != 5000 || req.WaitSelector != "main" || r.Header.Get("Authorization") != "Bearer s3cret" {
 				t.Errorf("bad request: %s %s %+v", r.Method, r.URL.Path, req)
 			}
 			_ = json.NewEncoder(w).Encode(sidecarResponse{Status: 200, FinalURL: req.URL, HTML: "<html>ok</html>"})
@@ -40,7 +40,7 @@ func TestSidecarFetcher(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := httptest.NewServer(tt.handler)
 			defer srv.Close()
-			f := &SidecarFetcher{BaseURL: srv.URL + "/", Timeout: 5 * time.Second, WaitSelector: "main"}
+			f := &SidecarFetcher{BaseURL: srv.URL + "/", Timeout: 5 * time.Second, WaitSelector: "main", Token: "s3cret"}
 			p, err := f.Get(context.Background(), "https://shop.test/p/1")
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
@@ -68,6 +68,19 @@ func TestSidecarFetcher_UnreachableAndPing(t *testing.T) {
 	}
 	if _, err := f.Get(context.Background(), "https://x.test/"); !errors.Is(err, ErrTransient) {
 		t.Fatalf("Get on closed server: %v", err)
+	}
+}
+
+func TestSidecarFetcher_NoTokenNoHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h := r.Header.Get("Authorization"); h != "" {
+			t.Errorf("unexpected Authorization header %q", h)
+		}
+		_ = json.NewEncoder(w).Encode(sidecarResponse{Status: 200})
+	}))
+	defer srv.Close()
+	if _, err := (&SidecarFetcher{BaseURL: srv.URL}).Get(context.Background(), "https://x.test/"); err != nil {
+		t.Fatal(err)
 	}
 }
 

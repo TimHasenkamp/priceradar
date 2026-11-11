@@ -7,7 +7,11 @@ API:
   POST /fetch   {"url": "...", "timeout_ms": 60000, "wait_selector": "css (optional)"}
                 -> 200 {"status": int, "final_url": str, "html": str}
                 -> 4xx/502 {"error": str}
-  GET  /healthz -> 200 {"status": "ok"}
+  GET  /healthz -> 200 {"status": "ok"}   (never requires the token)
+
+Auth: if FETCHER_TOKEN is set, POST /fetch requires "Authorization: Bearer <token>".
+Set it whenever the fetcher is reachable beyond a private Docker network
+(e.g. over a VPN such as NetBird/Tailscale).
 
 Requests are handled one at a time (plain HTTPServer, single thread), which
 matches the backend's "never in parallel" policy.
@@ -15,6 +19,7 @@ matches the backend's "never in parallel" policy.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -32,6 +37,7 @@ ALLOWED_HOSTS = {
     if h.strip()
 }
 MAX_BODY = 64 * 1024
+TOKEN = os.environ.get("FETCHER_TOKEN", "")
 
 
 def fetch(url: str, timeout_ms: int, wait_selector: str | None) -> dict:
@@ -68,6 +74,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/fetch":
             self._send(404, {"error": "not found"})
             return
+        if TOKEN:
+            given = self.headers.get("Authorization", "")
+            if not hmac.compare_digest(given.encode(), f"Bearer {TOKEN}".encode()):
+                log.warning("rejected request without valid token from %s", self.client_address[0])
+                self._send(401, {"error": "unauthorized"})
+                return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > MAX_BODY:
@@ -107,7 +119,8 @@ def main() -> None:
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     addr = os.environ.get("FETCHER_ADDR", "0.0.0.0")
     port = int(os.environ.get("FETCHER_PORT", "8000"))
-    log.info("listening on %s:%d, allowed hosts=%s", addr, port, sorted(ALLOWED_HOSTS))
+    log.info("listening on %s:%d, allowed hosts=%s, token auth=%s", addr, port, sorted(ALLOWED_HOSTS),
+             "on" if TOKEN else "OFF")
     HTTPServer((addr, port), Handler).serve_forever()
 
 

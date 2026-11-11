@@ -34,6 +34,9 @@ type SidecarFetcher struct {
 	// WaitSelector (optional) makes the browser wait until this CSS selector
 	// is attached, e.g. so a JS bot challenge can solve and reload the page.
 	WaitSelector string
+	// Token (optional) is sent as "Authorization: Bearer <token>"; it must
+	// match FETCHER_TOKEN of the sidecar when that is reachable over a network.
+	Token string
 }
 
 type sidecarRequest struct {
@@ -61,6 +64,9 @@ func (f *SidecarFetcher) Get(ctx context.Context, rawURL string) (Page, error) {
 		return Page{}, fmt.Errorf("sidecar request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if f.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+f.Token)
+	}
 	client := f.Client
 	if client == nil {
 		client = &http.Client{Timeout: timeout + 30*time.Second}

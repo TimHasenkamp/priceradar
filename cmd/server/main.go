@@ -48,7 +48,7 @@ func run(cfg config.Config, log *slog.Logger) error {
 	}
 	defer st.Close()
 
-	sidecar := &scraper.SidecarFetcher{BaseURL: cfg.FetcherURL, Timeout: cfg.FetchTimeout, WaitSelector: otto.WaitSelector}
+	sidecar := &scraper.SidecarFetcher{BaseURL: cfg.FetcherURL, Timeout: cfg.FetchTimeout, WaitSelector: otto.WaitSelector, Token: cfg.FetcherToken}
 	polite := scraper.NewPolite(sidecar, scraper.NewRobots(cfg.UserAgent, nil, 24*time.Hour),
 		scraper.PoliteConfig{Delay: cfg.RequestDelay, Jitter: cfg.RequestJitter})
 	// New shops: construct their scraper here and add it to the registry.
@@ -80,7 +80,8 @@ func run(cfg config.Config, log *slog.Logger) error {
 
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", cfg.ListenAddr, "db", cfg.DBPath, "fetcher", cfg.FetcherURL, "interval", cfg.ScrapeInterval.String())
+		log.Info("listening", "addr", cfg.ListenAddr, "db", cfg.DBPath, "fetcher", cfg.FetcherURL,
+			"fetcher_token", cfg.FetcherToken != "", "interval", cfg.ScrapeInterval.String())
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
