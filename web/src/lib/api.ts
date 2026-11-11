@@ -19,6 +19,8 @@ export type ApiErrorCode =
 	| 'scrape_failed'
 	| 'timeout'
 	| 'internal'
+	| 'not_configured'
+	| 'notify_failed'
 	| 'backend_unreachable'
 	| 'network';
 
@@ -46,6 +48,7 @@ export interface Product {
 	target_price_cents: number | null;
 	target_reached: boolean;
 	paused: boolean;
+	notify: boolean;
 	created_at: string;
 	last_checked_at: string | null;
 	last_success_at: string | null;
@@ -73,6 +76,32 @@ export interface Check {
 	duration_ms: number | null;
 }
 
+export type NotificationKind =
+	| 'target_reached'
+	| 'price_drop'
+	| 'price_rise'
+	| 'new_low'
+	| 'trend_down'
+	| 'trend_up'
+	| 'back_in_stock'
+	| 'out_of_stock'
+	| 'scrape_failing';
+
+export type NotificationStatus = 'pending' | 'sent' | 'failed' | 'skipped';
+
+export interface Notification {
+	id: number;
+	kind: NotificationKind;
+	title: string;
+	/** Markdown body as sent to Gotify. */
+	message: string;
+	priority: number;
+	status: NotificationStatus;
+	error: string | null;
+	created_at: string;
+	sent_at: string | null;
+}
+
 export interface RefreshResult {
 	product: Product;
 	check: Check;
@@ -86,6 +115,7 @@ export interface CreateProductInput {
 export interface PatchProductInput {
 	custom_name?: string | null;
 	paused?: boolean;
+	notify?: boolean;
 	target_price_cents?: number | null;
 }
 
@@ -192,6 +222,14 @@ export function refreshProduct(id: number, f: Fetch = fetch): Promise<RefreshRes
 	return request<RefreshResult>(f, 'POST', `/products/${enc(String(id))}/refresh`);
 }
 
+export function getNotifications(id: number, limit = 50, f: Fetch = fetch): Promise<Notification[]> {
+	return request<Notification[]>(f, 'GET', `/products/${enc(String(id))}/notifications?limit=${limit}`);
+}
+
+export function sendTestNotification(f: Fetch = fetch): Promise<{ status: 'sent' }> {
+	return request<{ status: 'sent' }>(f, 'POST', '/notifications/test');
+}
+
 /** Maps API error codes to German UI messages. */
 export function errorText(e: unknown): string {
 	if (e instanceof ApiError) {
@@ -206,6 +244,10 @@ export function errorText(e: unknown): string {
 				return 'Zeitüberschreitung – bitte später erneut versuchen';
 			case 'not_found':
 				return 'Produkt nicht gefunden';
+			case 'not_configured':
+				return 'Gotify ist nicht konfiguriert (PR_GOTIFY_URL / PR_GOTIFY_TOKEN)';
+			case 'notify_failed':
+				return `Senden fehlgeschlagen: ${e.message}`;
 			case 'invalid_request':
 				return `Ungültige Anfrage: ${e.message}`;
 			case 'backend_unreachable':

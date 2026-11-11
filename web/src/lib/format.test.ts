@@ -7,7 +7,10 @@ import {
 	parseEuroToCents,
 	priceChange,
 	centsToInput,
-	errorKindLabel
+	errorKindLabel,
+	notificationKind,
+	notificationStatus,
+	notificationStatusTitle
 } from './format';
 
 // Intl uses non-breaking spaces; normalize for readable assertions.
@@ -92,5 +95,26 @@ describe('errorKindLabel', () => {
 	it('maps known kinds and passes through unknown', () => {
 		expect(errorKindLabel('blocked')).toBe('Blockiert (Bot-Schutz)');
 		expect(errorKindLabel('weird')).toBe('weird');
+	});
+});
+
+describe('notification helpers', () => {
+	it('labels kinds with an icon', () => {
+		expect(notificationKind('target_reached')).toEqual({ label: 'Zielpreis erreicht', icon: '★' });
+		expect(notificationKind('new_low').label).toBe('Neuer Tiefstpreis');
+		expect(notificationKind('mystery')).toEqual({ label: 'mystery', icon: '•' });
+	});
+	it('labels statuses in German', () => {
+		expect(notificationStatus('sent').label).toBe('gesendet');
+		expect(notificationStatus('failed')).toEqual({ label: 'fehlgeschlagen', badge: 'badge-bad' });
+		expect(notificationStatus('skipped').label).toBe('übersprungen');
+		expect(notificationStatus('weird')).toEqual({ label: 'weird', badge: '' });
+	});
+	it('uses the error as tooltip', () => {
+		expect(notificationStatusTitle({ status: 'failed', error: 'HTTP 401', sent_at: null })).toBe('HTTP 401');
+		expect(notificationStatusTitle({ status: 'failed', error: null, sent_at: null })).toBe('Unbekannter Fehler');
+		expect(notificationStatusTitle({ status: 'skipped', error: null, sent_at: null })).toContain('nicht konfiguriert');
+		expect(notificationStatusTitle({ status: 'sent', error: null, sent_at: '2026-11-11T14:00:00Z' })).toMatch(/^Gesendet am /);
+		expect(notificationStatusTitle({ status: 'pending', error: null, sent_at: null })).toBeUndefined();
 	});
 });

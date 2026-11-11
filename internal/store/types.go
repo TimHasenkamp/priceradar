@@ -24,6 +24,7 @@ type Product struct {
 	Currency            string
 	TargetPriceCents    *int64
 	Paused              bool
+	Notify              bool // send notifications for this product
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	LastCheckedAt       *time.Time
@@ -68,6 +69,7 @@ type ProductPatch struct {
 	Paused           *bool
 	TargetPriceCents *int64
 	ClearTargetPrice bool
+	Notify           *bool
 }
 
 // PriceCheck is one scrape attempt (successful or not).
@@ -102,4 +104,36 @@ type ProductStats struct {
 type ProductWithStats struct {
 	Product
 	Stats ProductStats
+}
+
+// Notification statuses.
+const (
+	NotificationPending = "pending" // queued for the dispatcher
+	NotificationSent    = "sent"
+	NotificationFailed  = "failed"
+	NotificationSkipped = "skipped" // no notifier configured
+)
+
+// Notification is one notification event for a product, whether or not it was sent.
+type Notification struct {
+	ID        int64
+	ProductID int64
+	Kind      string
+	Title     string
+	Message   string // Markdown
+	Priority  int
+	Status    string
+	Error     *string
+	// TargetPriceCents is the product's target when the event fired.
+	TargetPriceCents *int64
+	CreatedAt        time.Time
+	SentAt           *time.Time
+}
+
+// SuccessSummary aggregates the successful checks of a product.
+type SuccessSummary struct {
+	Count    int
+	FirstAt  *time.Time
+	MinCents *int64
+	Last     *PriceCheck // latest successful check
 }

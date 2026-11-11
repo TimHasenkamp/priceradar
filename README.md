@@ -110,6 +110,37 @@ All settings are environment variables; see [.env.example](.env.example).
 | `PR_FETCHER_URL` | `http://localhost:8000` | Fetcher sidecar |
 | `PR_FETCHER_TOKEN` | – | Shared secret, sent as `Authorization: Bearer …`. Must match `FETCHER_TOKEN` of the fetcher |
 | `LOG_LEVEL` / `LOG_FORMAT` | `info` / `json` | slog output |
+| `PR_GOTIFY_URL` / `PR_GOTIFY_TOKEN` | – | Gotify server and application token. Notifications are sent only if both are set; otherwise events are still logged as "übersprungen" |
+| `PR_PUBLIC_URL` | – | Public URL of the web UI, e.g. `https://priceradar.example`. Notifications then link to `/products/{id}`; without it they link to the shop |
+| `PR_NOTIFY_CHANGE_PCT` / `PR_NOTIFY_CHANGE_MIN_CENTS` | `5` / `100` | A price drop/rise is reported if it is at least this many percent **and** cents |
+| `PR_NOTIFY_RISES` | `true` | Report price rises at all |
+| `PR_NOTIFY_LOW_MIN_HISTORY` | `7d` | "Neuer Tiefstpreis" only once the first check is at least this old |
+| `PR_NOTIFY_TREND_WINDOW` / `PR_NOTIFY_TREND_PCT` | `7d` / `8` | Trend window and minimum change of the trend line in percent |
+| `PR_NOTIFY_TREND_COOLDOWN` | `72h` | At most one trend message per direction and product in this period |
+| `PR_NOTIFY_FAILURES` | `3` | Consecutive failed checks before "Abruf schlägt fehl" is sent |
+
+Durations accept Go syntax (`90m`, `72h`) plus days (`7d`, `1d12h`).
+
+## Notifications (Gotify)
+
+PriceRadar can push notifications to a [Gotify](https://gotify.net) server. Messages are German and use Markdown.
+
+1. In the Gotify web UI, open **Apps → Create Application**, name it e.g. "PriceRadar" and copy the **token**.
+2. Set `PR_GOTIFY_URL=https://gotify.example` (the base URL, a sub path behind a reverse proxy works too) and `PR_GOTIFY_TOKEN=<token>`. Optionally set `PR_PUBLIC_URL` so that a click opens the product in PriceRadar.
+3. Restart the backend and press **Testbenachrichtigung senden** in the footer of the web UI.
+
+After each check the backend evaluates these events for the product:
+
+| Event | Priority | When |
+|---|---|---|
+| Zielpreis erreicht (`target_reached`) | 8 | Price ≤ target. Once; re-armed when a later check is above the target again, or when the target is changed |
+| Preis gesunken / gestiegen (`price_drop` / `price_rise`) | 6 / 3 | Change against the previous successful price ≥ `PR_NOTIFY_CHANGE_PCT` and ≥ `PR_NOTIFY_CHANGE_MIN_CENTS` |
+| Neuer Tiefstpreis (`new_low`) | 6 | Lower than every previous price and the history is at least `PR_NOTIFY_LOW_MIN_HISTORY` old. Combined with a price drop into one message |
+| Preistrend fallend / steigend (`trend_down` / `trend_up`) | 4 / 2 | Least-squares trend over `PR_NOTIFY_TREND_WINDOW` (≥ 4 checks, ≥ 2 different prices) changes by ≥ `PR_NOTIFY_TREND_PCT`; cooldown `PR_NOTIFY_TREND_COOLDOWN` |
+| Wieder lieferbar / Ausverkauft (`back_in_stock` / `out_of_stock`) | 6 / 3 | Availability changes between available (lieferbar, begrenzt, vorbestellbar) and sold out |
+| Abruf schlägt fehl (`scrape_failing`) | 5 | `PR_NOTIFY_FAILURES` consecutive failed checks. Once per failure streak |
+
+Paused products and products with notifications switched off (toggle on the product page) send nothing. The first check of a product only triggers "Zielpreis erreicht". Sending runs in the background and is retried up to 3 times on 5xx/network errors; every event and its outcome is shown in the product's "Benachrichtigungen" log.
 
 ## How a price is read (otto.de)
 
@@ -171,6 +202,7 @@ internal/config/      env parsing
 internal/scraper/     interface, registry, sidecar client, polite fetcher, robots.txt, retry
 internal/scraper/otto otto.de parser
 internal/scheduler/   serial scrape queue (periodic run + manual jobs)
+internal/notify/      notification rules (evaluator, trend), Gotify client, async dispatcher
 internal/store/       SQLite, versioned migrations (internal/store/migrations/*.sql)
 internal/api/         REST handlers
 fetcher/              Python sidecar (Scrapling)

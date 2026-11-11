@@ -2,6 +2,7 @@
 	import { errorText, refreshProduct, type Product } from '$lib/api';
 	import { clock } from '$lib/clock.svelte';
 	import { errorKindLabel, formatCents, formatDateTime, formatRelative } from '$lib/format';
+	import BellOffIcon from './BellOffIcon.svelte';
 	import PriceChange from './PriceChange.svelte';
 	import ProductImage from './ProductImage.svelte';
 	import StatusBadges from './StatusBadges.svelte';
@@ -52,9 +53,14 @@
 	</a>
 
 	<div class="body">
-		<h2 class="name">
-			<a href="/products/{product.id}">{product.name}</a>
-		</h2>
+		<div class="name-row">
+			<h2 class="name">
+				<a href="/products/{product.id}">{product.name}</a>
+			</h2>
+			{#if !product.notify}
+				<BellOffIcon size={15} />
+			{/if}
+		</div>
 
 		<StatusBadges {product} />
 
@@ -135,7 +141,17 @@
 		gap: 0.55rem;
 		min-width: 0;
 	}
+	.name-row {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 0.5rem;
+	}
+	.name-row :global(.bell-off) {
+		margin-top: 0.2rem;
+	}
 	.name {
+		min-width: 0;
 		font-size: 0.975rem;
 		font-weight: 650;
 		display: -webkit-box;

@@ -15,6 +15,7 @@ import (
 
 	"priceradar/internal/api"
 	"priceradar/internal/config"
+	"priceradar/internal/notify"
 	"priceradar/internal/scheduler"
 	"priceradar/internal/scraper"
 	"priceradar/internal/scraper/otto"
@@ -48,6 +49,28 @@ func run(cfg config.Config, log *slog.Logger) error {
 	}
 	defer st.Close()
 
+	// Messages queued when the process last stopped will never be sent.
+	if n, err := st.FailPendingNotifications(ctx, "nicht gesendet: Server wurde beendet"); err != nil {
+		return err
+	} else if n > 0 {
+		log.Warn("marked stale pending notifications as failed", "count", n)
+	}
+
+	// Notifications: without Gotify, events are still recorded as "skipped".
+	var (
+		notifier   notify.Notifier // stays a nil interface when not configured
+		queue      notify.Enqueuer
+		dispatcher *notify.Dispatcher
+	)
+	if cfg.GotifyConfigured() {
+		g := notify.NewGotify(cfg.GotifyURL, cfg.GotifyToken)
+		dispatcher = notify.NewDispatcher(g, st, log.With("component", "notify"))
+		notifier, queue = g, dispatcher
+	} else if cfg.GotifyURL != "" || cfg.GotifyToken != "" {
+		log.Warn("Gotify needs both PR_GOTIFY_URL and PR_GOTIFY_TOKEN; notifications are not sent")
+	}
+	notifications := notify.NewService(st, cfg.Notify, queue, log.With("component", "notify"))
+
 	sidecar := &scraper.SidecarFetcher{BaseURL: cfg.FetcherURL, Timeout: cfg.FetchTimeout, WaitSelector: otto.WaitSelector, Token: cfg.FetcherToken}
 	polite := scraper.NewPolite(sidecar, scraper.NewRobots(cfg.UserAgent, nil, 24*time.Hour),
 		scraper.PoliteConfig{Delay: cfg.RequestDelay, Jitter: cfg.RequestJitter})
@@ -57,6 +80,7 @@ func run(cfg config.Config, log *slog.Logger) error {
 	svc := scheduler.New(st, reg, scheduler.Config{
 		Interval: cfg.ScrapeInterval,
 		Retry:    scraper.RetryConfig{Attempts: cfg.MaxRetries + 1, BaseBackoff: cfg.RetryBackoff, Factor: 4},
+		Observer: notifications,
 	}, log.With("component", "scheduler"))
 
 	scrapeTimeout := 3 * time.Minute
@@ -64,6 +88,7 @@ func run(cfg config.Config, log *slog.Logger) error {
 		Addr: cfg.ListenAddr,
 		Handler: (&api.Server{
 			Store: st, Scrapes: svc, Fetcher: sidecar, Log: log.With("component", "api"), ScrapeTimeout: scrapeTimeout,
+			Notifier: notifier, PublicURL: cfg.PublicURL,
 		}).Handler(),
 		// Request contexts derive from the signal context, so in-flight scrapes
 		// (up to 3 min) are cancelled on SIGTERM instead of outliving the DB.
@@ -74,6 +99,18 @@ func run(cfg config.Config, log *slog.Logger) error {
 		IdleTimeout:       2 * time.Minute,
 	}
 
+	// The dispatcher gets its own context: it is stopped only after the
+	// scheduler (its producer) has finished, then drains its queue.
+	dispCtx, stopDispatcher := context.WithCancel(context.Background())
+	defer stopDispatcher()
+	dispDone := make(chan struct{})
+	if dispatcher != nil {
+		go func() { defer close(dispDone); dispatcher.Run(dispCtx) }()
+	} else {
+		close(dispDone)
+	}
+	stopNotify := func() { stopDispatcher(); <-dispDone }
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); svc.Run(ctx) }()
@@ -81,7 +118,8 @@ func run(cfg config.Config, log *slog.Logger) error {
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", cfg.ListenAddr, "db", cfg.DBPath, "fetcher", cfg.FetcherURL,
-			"fetcher_token", cfg.FetcherToken != "", "interval", cfg.ScrapeInterval.String())
+			"fetcher_token", cfg.FetcherToken != "", "interval", cfg.ScrapeInterval.String(),
+			"gotify", cfg.GotifyConfigured(), "public_url", cfg.PublicURL)
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
@@ -92,6 +130,7 @@ func run(cfg config.Config, log *slog.Logger) error {
 	case err := <-errc:
 		stop()
 		wg.Wait()
+		stopNotify()
 		return err
 	case <-ctx.Done():
 	}
@@ -100,6 +139,7 @@ func run(cfg config.Config, log *slog.Logger) error {
 	defer cancel()
 	err = srv.Shutdown(shutdownCtx)
 	wg.Wait()
+	stopNotify()
 	return err
 }
 

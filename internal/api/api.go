@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"priceradar/internal/notify"
 	"priceradar/internal/scheduler"
 	"priceradar/internal/scraper"
 	"priceradar/internal/store"
@@ -36,6 +37,10 @@ type Server struct {
 	Log     *slog.Logger
 	// ScrapeTimeout bounds POST /products and POST /refresh.
 	ScrapeTimeout time.Duration
+	// Notifier sends test notifications; nil means Gotify is not configured.
+	Notifier notify.Notifier
+	// PublicURL is the web UI base URL (optional), used as the test message's click target.
+	PublicURL string
 }
 
 // Handler returns the HTTP handler with all routes.
@@ -49,6 +54,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/products/{id}/prices", s.listPrices)
 	mux.HandleFunc("GET /api/products/{id}/checks", s.listChecks)
 	mux.HandleFunc("POST /api/products/{id}/refresh", s.refresh)
+	mux.HandleFunc("GET /api/products/{id}/notifications", s.listNotifications)
+	mux.HandleFunc("POST /api/notifications/test", s.testNotification)
 	mux.HandleFunc("GET /api/healthz", s.health)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
@@ -170,6 +177,13 @@ func (s *Server) patchProduct(w http.ResponseWriter, r *http.Request) {
 			} else if err = json.Unmarshal(v, &b); err == nil {
 				patch.Paused = &b
 			}
+		case "notify":
+			var b bool
+			if isNull {
+				err = errors.New("must be true or false")
+			} else if err = json.Unmarshal(v, &b); err == nil {
+				patch.Notify = &b
+			}
 		case "target_price_cents":
 			if isNull {
 				patch.ClearTargetPrice = true
@@ -244,14 +258,9 @@ func (s *Server) listChecks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > 500 {
-			writeError(w, http.StatusBadRequest, "invalid_request", "limit must be 1..500")
-			return
-		}
-		limit = n
+	limit, ok := queryLimit(w, r)
+	if !ok {
+		return
 	}
 	if _, err := s.Store.GetProduct(r.Context(), id); err != nil {
 		s.storeError(w, r, err)
@@ -267,6 +276,47 @@ func (s *Server) listChecks(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toCheckJSON(c))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	limit, ok := queryLimit(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.Store.GetProduct(r.Context(), id); err != nil {
+		s.storeError(w, r, err)
+		return
+	}
+	list, err := s.Store.ListNotifications(r.Context(), id, limit)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	out := make([]notificationJSON, 0, len(list))
+	for _, n := range list {
+		out = append(out, toNotificationJSON(n))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
+	if s.Notifier == nil {
+		writeError(w, http.StatusConflict, "not_configured", "Gotify is not configured (set PR_GOTIFY_URL and PR_GOTIFY_TOKEN)")
+		return
+	}
+	if err := s.Notifier.Send(r.Context(), notify.TestMessage(s.PublicURL)); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		s.Log.Warn("test notification failed", "err", err)
+		writeError(w, http.StatusBadGateway, "notify_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
 }
 
 func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
@@ -303,7 +353,10 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	out := map[string]string{"status": "ok", "db": "ok", "fetcher": "ok"}
+	out := map[string]string{"status": "ok", "db": "ok", "fetcher": "ok", "gotify": "not_configured"}
+	if s.Notifier != nil {
+		out["gotify"] = "configured" // deliberately not pinged
+	}
 	code := http.StatusOK
 	if err := s.Store.Ping(ctx); err != nil {
 		out["db"], out["status"], code = "down", "degraded", http.StatusServiceUnavailable
@@ -365,6 +418,20 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		}
 		s.Log.Log(r.Context(), level, "http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "took_ms", time.Since(start).Milliseconds())
 	})
+}
+
+// queryLimit parses ?limit= (default 50, 1..500).
+func queryLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
+	v := r.URL.Query().Get("limit")
+	if v == "" {
+		return 50, true
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 500 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "limit must be 1..500")
+		return 0, false
+	}
+	return n, true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {

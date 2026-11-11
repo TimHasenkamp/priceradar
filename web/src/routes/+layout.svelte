@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { theme } from '$lib/theme.svelte';
 	import { clock } from '$lib/clock.svelte';
+	import TestNotificationButton from '$lib/components/TestNotificationButton.svelte';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -85,6 +86,7 @@
 
 <footer class="site-footer container">
 	<span>PriceRadar · selbst gehostet · Preise von otto.de</span>
+	<TestNotificationButton />
 </footer>
 
 <style>
@@ -190,6 +192,11 @@
 		min-height: calc(100vh - 9rem);
 	}
 	.site-footer {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem 1rem;
 		padding-top: 0.5rem;
 		padding-bottom: 2rem;
 		font-size: 0.8rem;

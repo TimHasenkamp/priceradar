@@ -1,4 +1,4 @@
-import type { Availability, ErrorKind } from './api';
+import type { Availability, ErrorKind, NotificationKind, NotificationStatus } from './api';
 
 const currencyFormatters = new Map<string, Intl.NumberFormat>();
 
@@ -154,4 +154,41 @@ export const availabilityLabels: Record<Availability, string> = {
 export function availabilityLabel(a: string | null | undefined): string {
 	if (!a) return availabilityLabels.unknown;
 	return (availabilityLabels as Record<string, string>)[a] ?? a;
+}
+
+export const notificationKinds: Record<NotificationKind, { label: string; icon: string }> = {
+	target_reached: { label: 'Zielpreis erreicht', icon: '★' },
+	price_drop: { label: 'Preis gesunken', icon: '↓' },
+	price_rise: { label: 'Preis gestiegen', icon: '↑' },
+	new_low: { label: 'Neuer Tiefstpreis', icon: '⤓' },
+	trend_down: { label: 'Trend fallend', icon: '↘' },
+	trend_up: { label: 'Trend steigend', icon: '↗' },
+	back_in_stock: { label: 'Wieder lieferbar', icon: '✓' },
+	out_of_stock: { label: 'Ausverkauft', icon: '∅' },
+	scrape_failing: { label: 'Abruf schlägt fehl', icon: '⚠' }
+};
+
+/** Label and icon for a notification kind; unknown kinds fall back to the raw kind. */
+export function notificationKind(kind: string): { label: string; icon: string } {
+	return (notificationKinds as Record<string, { label: string; icon: string }>)[kind] ?? { label: kind, icon: '•' };
+}
+
+export const notificationStatuses: Record<NotificationStatus, { label: string; badge: string }> = {
+	sent: { label: 'gesendet', badge: 'badge-good' },
+	failed: { label: 'fehlgeschlagen', badge: 'badge-bad' },
+	skipped: { label: 'übersprungen', badge: '' },
+	pending: { label: 'ausstehend', badge: 'badge-info' }
+};
+
+/** Chip label/class for a notification status. */
+export function notificationStatus(status: string): { label: string; badge: string } {
+	return (notificationStatuses as Record<string, { label: string; badge: string }>)[status] ?? { label: status, badge: '' };
+}
+
+/** Tooltip for a notification status chip: the error for failures, a hint for skipped ones. */
+export function notificationStatusTitle(n: { status: string; error: string | null; sent_at: string | null }): string | undefined {
+	if (n.status === 'failed') return n.error ?? 'Unbekannter Fehler';
+	if (n.status === 'skipped') return n.error ?? 'Gotify ist nicht konfiguriert – nur protokolliert';
+	if (n.status === 'sent' && n.sent_at) return `Gesendet am ${formatDateTime(n.sent_at)}`;
+	return undefined;
 }

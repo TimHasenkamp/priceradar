@@ -20,6 +20,14 @@ type Config struct {
 	// Retry is applied to periodic scrapes only; manual scrapes try once so
 	// the HTTP request returns in reasonable time.
 	Retry scraper.RetryConfig
+	// Observer, if set, is told about every recorded check (notifications).
+	Observer CheckObserver
+}
+
+// CheckObserver is called on the scrape worker after a check was stored.
+// It must be quick and must not block; errors are its own business.
+type CheckObserver interface {
+	CheckRecorded(ctx context.Context, c store.PriceCheck)
 }
 
 // Service owns the scrape worker.
@@ -201,7 +209,21 @@ func (s *Service) record(ctx context.Context, log *slog.Logger, id int64, o scra
 		log.Error("record check", "err", err)
 		return c
 	}
+	s.observe(context.WithoutCancel(ctx), log, saved)
 	return saved
+}
+
+// observe runs the observer; a panic in it must never take down the worker.
+func (s *Service) observe(ctx context.Context, log *slog.Logger, c store.PriceCheck) {
+	if s.cfg.Observer == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("check observer panic", "panic", r)
+		}
+	}()
+	s.cfg.Observer.CheckRecorded(ctx, c)
 }
 
 // Refresh scrapes one product now (single attempt) and returns the check.

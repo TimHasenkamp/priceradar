@@ -30,6 +30,7 @@ type productJSON struct {
 	TargetPriceCents    *int64     `json:"target_price_cents"`
 	TargetReached       bool       `json:"target_reached"`
 	Paused              bool       `json:"paused"`
+	Notify              bool       `json:"notify"`
 	CreatedAt           time.Time  `json:"created_at"`
 	LastCheckedAt       *time.Time `json:"last_checked_at"`
 	LastSuccessAt       *time.Time `json:"last_success_at"`
@@ -48,6 +49,7 @@ func toProductJSON(p store.ProductWithStats) productJSON {
 		TargetPriceCents: p.TargetPriceCents,
 		TargetReached:    p.TargetPriceCents != nil && st.CurrentCents != nil && *st.CurrentCents <= *p.TargetPriceCents,
 		Paused:           p.Paused,
+		Notify:           p.Notify,
 		CreatedAt:        p.CreatedAt.UTC(), LastCheckedAt: utc(p.LastCheckedAt), LastSuccessAt: utc(p.LastSuccessAt),
 		ConsecutiveFailures: p.ConsecutiveFailures, LastErrorKind: p.LastErrorKind, LastError: p.LastError,
 		Stats: statsJSON{st.CurrentCents, st.PreviousCents, st.Avg30Cents, st.MinCents, st.MaxCents, st.OldPriceCents, st.RRPCents, st.Availability},
@@ -82,4 +84,20 @@ func utc(t *time.Time) *time.Time {
 	}
 	u := t.UTC()
 	return &u
+}
+
+type notificationJSON struct {
+	ID        int64      `json:"id"`
+	Kind      string     `json:"kind"`
+	Title     string     `json:"title"`
+	Message   string     `json:"message"`
+	Priority  int        `json:"priority"`
+	Status    string     `json:"status"`
+	Error     *string    `json:"error"`
+	CreatedAt time.Time  `json:"created_at"`
+	SentAt    *time.Time `json:"sent_at"`
+}
+
+func toNotificationJSON(n store.Notification) notificationJSON {
+	return notificationJSON{n.ID, n.Kind, n.Title, n.Message, n.Priority, n.Status, n.Error, n.CreatedAt.UTC(), utc(n.SentAt)}
 }

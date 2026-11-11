@@ -5,10 +5,12 @@
 	import {
 		deleteProduct,
 		errorText,
+		getNotifications,
 		getPrices,
 		patchProduct,
 		refreshProduct,
 		type Check,
+		type Notification,
 		type PatchProductInput,
 		type PricePoint,
 		type Product
@@ -28,6 +30,7 @@
 	import { RANGES, rangeFrom, type RangeKey } from '$lib/ranges';
 	import PriceChange from '$lib/components/PriceChange.svelte';
 	import PriceChart, { type ChartSeries } from '$lib/components/PriceChart.svelte';
+	import NotificationLog from '$lib/components/NotificationLog.svelte';
 	import ProductImage from '$lib/components/ProductImage.svelte';
 	import StatusBadges from '$lib/components/StatusBadges.svelte';
 	import type { PageProps } from './$types';
@@ -37,13 +40,15 @@
 	let product = $derived<Product>(data.product);
 	let prices = $derived<PricePoint[]>(data.prices);
 	let checks = $derived<Check[]>(data.checks);
+	let notifications = $derived<Notification[]>(data.notifications);
+	let notificationsError = $derived<string | null>(data.notificationsError);
 	let range = $derived<RangeKey>(data.range);
 	let rangeTo = $derived<number>(data.rangeTo);
 
 	let pricesLoading = $state(false);
 	let pricesError = $state<string | null>(null);
 
-	type Busy = 'rename' | 'target' | 'pause' | 'refresh' | 'delete' | null;
+	type Busy = 'rename' | 'target' | 'pause' | 'notify' | 'refresh' | 'delete' | null;
 	let busy = $state<Busy>(null);
 	let actionError = $state<string | null>(null);
 	let actionInfo = $state<string | null>(null);
@@ -188,6 +193,23 @@
 		await patch('pause', { paused: !product.paused }, product.paused ? 'Überwachung fortgesetzt.' : 'Überwachung pausiert.');
 	}
 
+	async function toggleNotify() {
+		await patch(
+			'notify',
+			{ notify: !product.notify },
+			product.notify ? 'Benachrichtigungen ausgeschaltet.' : 'Benachrichtigungen eingeschaltet.'
+		);
+	}
+
+	async function reloadNotifications() {
+		try {
+			notifications = await getNotifications(product.id, 50);
+			notificationsError = null;
+		} catch (e) {
+			notificationsError = errorText(e);
+		}
+	}
+
 	async function refresh() {
 		busy = 'refresh';
 		actionError = null;
@@ -196,6 +218,8 @@
 			const res = await refreshProduct(product.id);
 			product = res.product;
 			checks = [res.check, ...checks.filter((c) => c.id !== res.check.id)].slice(0, 50);
+			// the check may have triggered notifications
+			void reloadNotifications();
 			if (res.check.success) {
 				actionInfo = `Aktualisiert: ${formatCents(res.check.price_cents, cur)}`;
 				await reloadPrices();
@@ -350,6 +374,18 @@
 			{#if busy === 'pause'}<span class="spinner" aria-hidden="true"></span>{/if}
 			{product.paused ? '▶ Fortsetzen' : '⏸ Pausieren'}
 		</button>
+		<button
+			class="btn notify-toggle"
+			type="button"
+			role="switch"
+			aria-checked={product.notify}
+			onclick={toggleNotify}
+			disabled={busy !== null}
+			title={product.paused ? 'Pausierte Produkte senden keine Benachrichtigungen' : undefined}
+		>
+			{#if busy === 'notify'}<span class="spinner" aria-hidden="true"></span>{:else}<span class="switch" aria-hidden="true"></span>{/if}
+			Benachrichtigungen
+		</button>
 		<button class="btn btn-danger" type="button" onclick={() => dialog?.showModal()} disabled={busy !== null}>
 			Löschen
 		</button>
@@ -444,6 +480,22 @@
 			</table>
 		</div>
 	{/if}
+</section>
+
+<section class="card log">
+	<div class="section-head">
+		<h2>Benachrichtigungen</h2>
+		<span class="muted small">
+			{#if !product.notify}
+				für dieses Produkt ausgeschaltet
+			{:else if product.paused}
+				pausiert – keine neuen Benachrichtigungen
+			{:else}
+				letzte {notifications.length}
+			{/if}
+		</span>
+	</div>
+	<NotificationLog {notifications} error={notificationsError} />
 </section>
 
 <dialog bind:this={dialog} class="card confirm" aria-labelledby="del-title">
@@ -577,6 +629,38 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
+	}
+	.switch {
+		position: relative;
+		flex: none;
+		width: 1.9rem;
+		height: 1.1rem;
+		border-radius: 999px;
+		background: var(--border-strong);
+		transition: background-color 0.15s;
+	}
+	.switch::after {
+		content: '';
+		position: absolute;
+		top: 0.15rem;
+		left: 0.15rem;
+		width: 0.8rem;
+		height: 0.8rem;
+		border-radius: 50%;
+		background: var(--surface);
+		transition: transform 0.15s;
+	}
+	.notify-toggle[aria-checked='true'] .switch {
+		background: var(--accent);
+	}
+	.notify-toggle[aria-checked='true'] .switch::after {
+		transform: translateX(0.8rem);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.switch,
+		.switch::after {
+			transition: none;
+		}
 	}
 	.messages {
 		flex-basis: 100%;

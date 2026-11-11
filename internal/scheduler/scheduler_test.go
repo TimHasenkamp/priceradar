@@ -215,3 +215,64 @@ func TestSubmit_AfterShutdown(t *testing.T) {
 		t.Fatalf("err = %v, want ErrShuttingDown", err)
 	}
 }
+
+type recObserver struct {
+	mu     sync.Mutex
+	checks []store.PriceCheck
+	panic  bool
+}
+
+func (o *recObserver) CheckRecorded(_ context.Context, c store.PriceCheck) {
+	o.mu.Lock()
+	o.checks = append(o.checks, c)
+	o.mu.Unlock()
+	if o.panic {
+		panic("evaluator bug")
+	}
+}
+
+func TestObserverCalledAfterRecord(t *testing.T) {
+	svc, st, fs := setup(t)
+	obs := &recObserver{}
+	svc.cfg.Observer = obs
+	startWorker(t, svc)
+	ctx := context.Background()
+
+	p, err := svc.Add(ctx, "https://shop.test/p/1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.set(scraper.Offer{}, errors.Join(errors.New("challenge"), scraper.ErrBlocked))
+	if _, err := svc.Refresh(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	// cancelled scrapes are not recorded and not observed
+	fs.set(scraper.Offer{}, context.Canceled)
+	svc.Refresh(ctx, p.ID)
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.checks) != 2 || !obs.checks[0].Success || obs.checks[0].ID == 0 || obs.checks[1].Success || obs.checks[1].ProductID != p.ID {
+		t.Fatalf("observed %+v", obs.checks)
+	}
+	// the observer sees the stored state
+	got, _ := st.GetProduct(ctx, p.ID)
+	if got.ConsecutiveFailures != 1 {
+		t.Fatalf("product %+v", got)
+	}
+}
+
+func TestObserverPanicDoesNotFailScrape(t *testing.T) {
+	svc, _, _ := setup(t)
+	svc.cfg.Observer = &recObserver{panic: true}
+	startWorker(t, svc)
+	ctx := context.Background()
+	p, err := svc.Add(ctx, "https://shop.test/p/1", nil)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	c, err := svc.Refresh(ctx, p.ID)
+	if err != nil || !c.Success || c.ID == 0 {
+		t.Fatalf("refresh: %+v %v", c, err)
+	}
+}

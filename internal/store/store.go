@@ -131,23 +131,25 @@ func isUnique(err error) bool {
 type scanner interface{ Scan(dest ...any) error }
 
 const productCols = `p.id, p.shop, p.url, p.sku, p.name, p.custom_name, p.image_url, p.currency,
-	p.target_price_cents, p.paused, p.created_at, p.updated_at, p.last_checked_at, p.last_success_at,
+	p.target_price_cents, p.paused, p.notify, p.created_at, p.updated_at, p.last_checked_at, p.last_success_at,
 	p.consecutive_failures, p.last_error_kind, p.last_error`
 
 // productDests returns scan destinations; call finish afterwards to fill p.
 func productDests(p *Product) (dests []any, finish func()) {
 	var (
-		custom, errKind, errMsg  sql.NullString
-		target, lastChk, lastOK  sql.NullInt64
-		paused, created, updated int64
+		custom, errKind, errMsg sql.NullString
+		target, lastChk, lastOK sql.NullInt64
+		paused, notify          int64
+		created, updated        int64
 	)
 	dests = []any{&p.ID, &p.Shop, &p.URL, &p.SKU, &p.Name, &custom, &p.ImageURL, &p.Currency,
-		&target, &paused, &created, &updated, &lastChk, &lastOK,
+		&target, &paused, &notify, &created, &updated, &lastChk, &lastOK,
 		&p.ConsecutiveFailures, &errKind, &errMsg}
 	finish = func() {
 		p.CustomName = strPtr(custom)
 		p.TargetPriceCents = intPtr(target)
 		p.Paused = paused != 0
+		p.Notify = notify != 0
 		p.CreatedAt = fromMS(created)
 		p.UpdatedAt = fromMS(updated)
 		p.LastCheckedAt = fromNullMS(lastChk)
@@ -316,6 +318,10 @@ func (s *Store) UpdateProduct(ctx context.Context, id int64, patch ProductPatch)
 	if patch.Paused != nil {
 		sets = append(sets, "paused = ?")
 		args = append(args, *patch.Paused)
+	}
+	if patch.Notify != nil {
+		sets = append(sets, "notify = ?")
+		args = append(args, *patch.Notify)
 	}
 	switch {
 	case patch.ClearTargetPrice:

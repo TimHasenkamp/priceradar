@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"priceradar/internal/notify"
 	"priceradar/internal/scheduler"
 	"priceradar/internal/scraper"
 	"priceradar/internal/store"
@@ -214,4 +215,126 @@ func TestHealth(t *testing.T) {
 	if code != 200 || m["status"] != "ok" || m["fetcher"] != "ok" {
 		t.Fatalf("health: %d %v", code, m)
 	}
+}
+
+type fakeNotifier struct {
+	err  error
+	sent []notify.Message
+}
+
+func (f *fakeNotifier) Send(_ context.Context, m notify.Message) error {
+	f.sent = append(f.sent, m)
+	return f.err
+}
+
+func newNotifyServer(t *testing.T, n notify.Notifier) (*httptest.Server, *store.Store) {
+	t.Helper()
+	st, err := store.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s := &Server{Store: st, Scrapes: &fakeScrapes{st: st}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), PublicURL: "https://pr.example"}
+	if n != nil {
+		s.Notifier = n
+	}
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	return srv, st
+}
+
+func TestNotifyFlagAndLog(t *testing.T) {
+	srv, st := newNotifyServer(t, nil)
+	code, p, _ := do(t, srv, "POST", "/api/products", `{"url":"https://www.otto.de/p/x-CS1/"}`)
+	if code != 201 || p["notify"] != true {
+		t.Fatalf("create: %d %v", code, p)
+	}
+	id := int64(p["id"].(float64))
+	base := fmt.Sprintf("/api/products/%d", id)
+
+	if code, p, _ = do(t, srv, "PATCH", base, `{"notify":false}`); code != 200 || p["notify"] != false {
+		t.Fatalf("patch notify: %d %v", code, p)
+	}
+	if code, m, _ := do(t, srv, "PATCH", base, `{"notify":null}`); code != 400 || errCode(m) != "invalid_request" {
+		t.Fatalf("patch null: %d %v", code, m)
+	}
+	if code, m, _ := do(t, srv, "PATCH", base, `{"notify":"no"}`); code != 400 || errCode(m) != "invalid_request" {
+		t.Fatalf("patch string: %d %v", code, m)
+	}
+
+	if code, _, list := do(t, srv, "GET", base+"/notifications", ""); code != 200 || list == nil || len(list) != 0 {
+		t.Fatalf("empty log: %d %v", code, list)
+	}
+	ctx := context.Background()
+	at := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	st.InsertNotification(ctx, store.Notification{ProductID: id, Kind: "price_drop", Title: "A", Message: "**a**", Priority: 6, Status: "skipped", CreatedAt: at})
+	n2, _ := st.InsertNotification(ctx, store.Notification{ProductID: id, Kind: "target_reached", Title: "B", Message: "b", Priority: 8, Status: "pending", CreatedAt: at.Add(time.Hour)})
+	st.UpdateNotificationStatus(ctx, n2.ID, "failed", ptrStr("HTTP 401"), nil)
+
+	code, _, list := do(t, srv, "GET", base+"/notifications?limit=500", "")
+	if code != 200 || len(list) != 2 {
+		t.Fatalf("log: %d %v", code, list)
+	}
+	first := list[0].(map[string]any)
+	if first["kind"] != "target_reached" || first["status"] != "failed" || first["error"] != "HTTP 401" || first["priority"] != 8.0 ||
+		first["title"] != "B" || first["message"] != "b" || first["sent_at"] != nil || first["created_at"] != "2026-11-11T13:00:00Z" || first["id"] == nil {
+		t.Fatalf("first: %v", first)
+	}
+	if second := list[1].(map[string]any); second["error"] != nil || second["status"] != "skipped" {
+		t.Fatalf("second: %v", second)
+	}
+	if _, _, list = do(t, srv, "GET", base+"/notifications?limit=1", ""); len(list) != 1 {
+		t.Fatalf("limit: %v", list)
+	}
+	for _, q := range []string{"?limit=0", "?limit=501", "?limit=x"} {
+		if code, m, _ := do(t, srv, "GET", base+"/notifications"+q, ""); code != 400 || errCode(m) != "invalid_request" {
+			t.Fatalf("%s: %d %v", q, code, m)
+		}
+	}
+	if code, m, _ := do(t, srv, "GET", "/api/products/999/notifications", ""); code != 404 || errCode(m) != "not_found" {
+		t.Fatalf("missing: %d %v", code, m)
+	}
+}
+
+func ptrStr(s string) *string { return &s }
+
+func TestNotificationTestEndpoint(t *testing.T) {
+	t.Run("not configured", func(t *testing.T) {
+		srv, _ := newNotifyServer(t, nil)
+		if code, m, _ := do(t, srv, "POST", "/api/notifications/test", ""); code != 409 || errCode(m) != "not_configured" {
+			t.Fatalf("%d %v", code, m)
+		}
+		if code, m, _ := do(t, srv, "GET", "/api/healthz", ""); code != 200 || m["gotify"] != "not_configured" {
+			t.Fatalf("health: %d %v", code, m)
+		}
+	})
+	t.Run("sent", func(t *testing.T) {
+		n := &fakeNotifier{}
+		srv, _ := newNotifyServer(t, n)
+		if code, m, _ := do(t, srv, "POST", "/api/notifications/test", ""); code != 200 || m["status"] != "sent" {
+			t.Fatalf("%d %v", code, m)
+		}
+		if len(n.sent) != 1 || n.sent[0].ClickURL != "https://pr.example" || n.sent[0].Title == "" {
+			t.Fatalf("sent %+v", n.sent)
+		}
+		if code, m, _ := do(t, srv, "GET", "/api/healthz", ""); code != 200 || m["gotify"] != "configured" {
+			t.Fatalf("health: %d %v", code, m)
+		}
+	})
+	t.Run("gotify error", func(t *testing.T) {
+		srv, _ := newNotifyServer(t, &fakeNotifier{err: errors.New("gotify: HTTP 401: Unauthorized")})
+		code, m, _ := do(t, srv, "POST", "/api/notifications/test", "")
+		if code != 502 || errCode(m) != "notify_failed" || !strings.Contains(m["error"].(map[string]any)["message"].(string), "401") {
+			t.Fatalf("%d %v", code, m)
+		}
+	})
+	t.Run("against real gotify client", func(t *testing.T) {
+		var key string
+		g := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { key = r.Header.Get("X-Gotify-Key") }))
+		defer g.Close()
+		srv, _ := newNotifyServer(t, notify.NewGotify(g.URL, "abc"))
+		if code, _, _ := do(t, srv, "POST", "/api/notifications/test", ""); code != 200 || key != "abc" {
+			t.Fatalf("%d key=%q", code, key)
+		}
+	})
 }

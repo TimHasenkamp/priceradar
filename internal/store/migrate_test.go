@@ -31,8 +31,9 @@ func TestMigrationsIdempotent(t *testing.T) {
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Errorf("schema_migrations rows = %d, want 1", n)
+	ms, _ := loadMigrations()
+	if n != len(ms) {
+		t.Errorf("schema_migrations rows = %d, want %d", n, len(ms))
 	}
 	ps, err := s.ListProducts(ctx)
 	if err != nil || len(ps) != 1 {

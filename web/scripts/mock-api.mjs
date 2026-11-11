@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // Zero-dependency in-memory mock of the PriceRadar API (docs/API.md) for frontend development.
 // Usage: node scripts/mock-api.mjs   (PORT env var overrides 8080)
+// MOCK_GOTIFY=1 simulates a configured Gotify (test message succeeds), MOCK_GOTIFY=fail
+// a failing one; unset means "not configured" (409).
 
 import { createServer } from 'node:http';
 
 const PORT = Number(process.env.PORT || 8080);
+const GOTIFY = process.env.MOCK_GOTIFY ?? '';
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 
@@ -26,6 +29,29 @@ let nextCheckId = 1;
 const products = new Map();
 /** @type {Map<number, any[]>} checks per product, ascending by time */
 const checks = new Map();
+let nextNotificationId = 1;
+/** @type {Map<number, any[]>} notifications per product, ascending by time */
+const notifications = new Map();
+
+const fmtEuro = (c) => (c / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+
+function addNotification(productId, kind, title, message, priority, at = Date.now()) {
+	const status = GOTIFY === '1' ? 'sent' : GOTIFY === 'fail' ? 'failed' : 'skipped';
+	const n = {
+		id: nextNotificationId++,
+		kind,
+		title,
+		message,
+		priority,
+		status,
+		error: status === 'failed' ? 'gotify: HTTP 401: Unauthorized: you need to provide a valid access token' : null,
+		created_at: iso(at),
+		sent_at: status === 'sent' ? iso(at + 800) : null
+	};
+	if (!notifications.has(productId)) notifications.set(productId, []);
+	notifications.get(productId).push(n);
+	return n;
+}
 
 function genHistory(productId, { days, base, volatility, seed, failTail = 0, endPrice }) {
 	const rand = rng(seed);
@@ -112,6 +138,7 @@ function computeProduct(p) {
 		target_price_cents: p.target_price_cents,
 		target_reached: p.target_price_cents != null && current != null && current <= p.target_price_cents,
 		paused: p.paused,
+		notify: p.notify,
 		created_at: p.created_at,
 		last_checked_at: lastCheck?.checked_at ?? null,
 		last_success_at: latest?.checked_at ?? null,
@@ -135,7 +162,7 @@ function seed() {
 	const now = Date.now();
 	const mk = (data) => {
 		const id = nextProductId++;
-		const p = { id, custom_name: null, paused: false, ...data };
+		const p = { id, custom_name: null, paused: false, notify: true, ...data };
 		products.set(id, p);
 		return p;
 	};
@@ -178,6 +205,24 @@ function seed() {
 		created_at: iso(now - 100 * DAY)
 	});
 	genHistory(c.id, { days: 100, base: 37900, volatility: 2000, seed: 99 });
+	c.notify = false;
+
+	addNotification(a.id, 'price_drop', 'Preis gesunken: Bambu Lab 3D-Drucker A1 Combo (−6,4 %)',
+		`**Bambu Lab 3D-Drucker A1 Combo**\n\nDer Preis ist gesunken.\n\n- Aktueller Preis: **${fmtEuro(43999)}**\n- Vorheriger Preis: ${fmtEuro(46999)}`,
+		6, now - 3 * DAY);
+	addNotification(a.id, 'target_reached', 'Zielpreis erreicht: Bambu Lab 3D-Drucker A1 Combo',
+		`**Bambu Lab 3D-Drucker A1 Combo**\n\nDein Zielpreis ist erreicht.\n\n- Aktueller Preis: **${fmtEuro(43999)}**\n- Zielpreis: ${fmtEuro(45000)}`,
+		8, now - 3 * DAY);
+	addNotification(a.id, 'trend_down', 'Preistrend fallend: Bambu Lab 3D-Drucker A1 Combo',
+		'**Bambu Lab 3D-Drucker A1 Combo**\n\nÜber die letzten 7 Tage ist der Preis laut Trendlinie um 9,1 % gefallen.',
+		4, now - 2 * DAY);
+	const fails = notifications.get(a.id);
+	fails[fails.length - 1].status = 'failed';
+	fails[fails.length - 1].error = 'gotify: HTTP 503: Service Unavailable';
+	fails[fails.length - 1].sent_at = null;
+	addNotification(b.id, 'scrape_failing', 'Abruf schlägt fehl: Philips Kaffeevollautomat 2200 Serie EP2224/40',
+		'**Philips Kaffeevollautomat**\n\nDie letzten 3 Abrufe sind fehlgeschlagen.\n\n- Fehlerart: **Seitenlayout geändert?**',
+		5, now - 20 * 60_000);
 }
 
 seed();
@@ -268,7 +313,14 @@ async function handle(req, res) {
 	console.log(`${new Date().toISOString()} ${method} ${url.pathname}${url.search}`);
 
 	if (path === '/api/healthz' && method === 'GET') {
-		return send(res, 200, { status: 'ok', db: 'ok', fetcher: 'ok' });
+		return send(res, 200, { status: 'ok', db: 'ok', fetcher: 'ok', gotify: GOTIFY ? 'configured' : 'not_configured' });
+	}
+
+	if (path === '/api/notifications/test' && method === 'POST') {
+		await sleep(500);
+		if (!GOTIFY) return fail(res, 409, 'not_configured', 'Gotify is not configured (set PR_GOTIFY_URL and PR_GOTIFY_TOKEN)');
+		if (GOTIFY === 'fail') return fail(res, 502, 'notify_failed', 'gotify: HTTP 401: Unauthorized: you need to provide a valid access token');
+		return send(res, 200, { status: 'sent' });
 	}
 
 	if (path === '/api/products') {
@@ -321,6 +373,7 @@ async function handle(req, res) {
 				image_url: `https://placehold.co/400x400/png?text=Produkt+${id}`,
 				target_price_cents: body.target_price_cents ?? null,
 				paused: false,
+				notify: true,
 				created_at: iso(Date.now())
 			};
 			products.set(id, p);
@@ -344,7 +397,7 @@ async function handle(req, res) {
 		return fail(res, 405, 'invalid_request', 'method not allowed');
 	}
 
-	const m = path.match(/^\/api\/products\/([^/]+)(?:\/(prices|checks|refresh))?$/);
+	const m = path.match(/^\/api\/products\/([^/]+)(?:\/(prices|checks|refresh|notifications))?$/);
 	if (m) {
 		const id = Number(m[1]);
 		if (!Number.isInteger(id) || id <= 0) return fail(res, 400, 'invalid_request', `bad id ${m[1]}`);
@@ -357,6 +410,7 @@ async function handle(req, res) {
 			if (method === 'DELETE') {
 				products.delete(id);
 				checks.delete(id);
+				notifications.delete(id);
 				return send(res, 204);
 			}
 			if (method === 'PATCH') {
@@ -374,6 +428,10 @@ async function handle(req, res) {
 				if ('paused' in body) {
 					if (typeof body.paused !== 'boolean') return fail(res, 400, 'invalid_request', 'paused must be boolean');
 					p.paused = body.paused;
+				}
+				if ('notify' in body) {
+					if (typeof body.notify !== 'boolean') return fail(res, 400, 'invalid_request', 'notify: must be true or false');
+					p.notify = body.notify;
 				}
 				if ('target_price_cents' in body) {
 					if (body.target_price_cents !== null && !isCents(body.target_price_cents))
@@ -415,10 +473,29 @@ async function handle(req, res) {
 			return send(res, 200, list);
 		}
 
+		if (sub === 'notifications' && method === 'GET') {
+			const limit = Number(url.searchParams.get('limit') ?? 50);
+			if (!Number.isInteger(limit) || limit < 1 || limit > 500)
+				return fail(res, 400, 'invalid_request', 'limit must be 1..500');
+			return send(res, 200, [...(notifications.get(id) ?? [])].reverse().slice(0, limit));
+		}
+
 		if (sub === 'refresh' && method === 'POST') {
 			await sleep(1000);
 			if (!products.has(id)) return fail(res, 404, 'not_found', `product ${id} not found`);
+			const before = computeProduct(p).stats.current_cents;
 			const check = doCheck(p);
+			if (p.notify && !p.paused && check.success && before && check.price_cents !== before) {
+				const diff = check.price_cents - before;
+				const pct = ((diff / before) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 });
+				if (Math.abs(diff / before) >= 0.02) {
+					const down = diff < 0;
+					addNotification(id, down ? 'price_drop' : 'price_rise',
+						`Preis ${down ? 'gesunken' : 'gestiegen'}: ${p.custom_name ?? p.original_name} (${pct} %)`,
+						`- Aktueller Preis: **${fmtEuro(check.price_cents)}**\n- Vorheriger Preis: ${fmtEuro(before)}`,
+						down ? 6 : 3);
+				}
+			}
 			return send(res, 200, { product: computeProduct(p), check: publicCheck(check) });
 		}
 
