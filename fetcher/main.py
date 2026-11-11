@@ -13,8 +13,9 @@ Auth: if FETCHER_TOKEN is set, POST /fetch requires "Authorization: Bearer <toke
 Set it whenever the fetcher is reachable beyond a private Docker network
 (e.g. over a VPN such as NetBird/Tailscale).
 
-Requests are handled one at a time (plain HTTPServer, single thread), which
-matches the backend's "never in parallel" policy.
+Fetches run one at a time (a lock around the browser), which matches the
+backend's "never in parallel" policy. The server itself is threaded so
+/healthz answers immediately even while a slow fetch is running.
 """
 
 from __future__ import annotations
@@ -23,8 +24,9 @@ import hmac
 import json
 import logging
 import os
+import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from scrapling.fetchers import StealthyFetcher
@@ -38,14 +40,19 @@ ALLOWED_HOSTS = {
 }
 MAX_BODY = 64 * 1024
 TOKEN = os.environ.get("FETCHER_TOKEN", "")
+FETCH_LOCK = threading.Lock()  # one browser session at a time
+# The browser's timezone/locale must match the exit IP's country: a German IP
+# with a UTC browser clock (the container default) is flagged by Kasada.
+TIMEZONE = os.environ.get("FETCHER_TIMEZONE", "Europe/Berlin")
+LOCALE = os.environ.get("FETCHER_LOCALE", "de-DE")
 
 
 def fetch(url: str, timeout_ms: int, wait_selector: str | None) -> dict:
-    kwargs = {}
+    kwargs = {"timezone_id": TIMEZONE, "locale": LOCALE}
     if wait_selector:
         # Bot-protection challenges (e.g. Kasada) are solved by JS in the
         # browser and then reload the page: wait until real content exists.
-        kwargs = {"wait_selector": wait_selector, "wait_selector_state": "attached"}
+        kwargs.update(wait_selector=wait_selector, wait_selector_state="attached")
     page = StealthyFetcher.fetch(url, headless=True, network_idle=True, timeout=timeout_ms, **kwargs)
     html = getattr(page, "html_content", None) or page.body
     if isinstance(html, bytes):
@@ -62,7 +69,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            log.info("client went away before the response was sent")
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/healthz":
@@ -101,7 +111,8 @@ class Handler(BaseHTTPRequestHandler):
 
         started = time.monotonic()
         try:
-            result = fetch(url, timeout_ms, wait_selector)
+            with FETCH_LOCK:
+                result = fetch(url, timeout_ms, wait_selector)
         except Exception as exc:  # browser/network failures -> transient for the backend
             log.warning("fetch failed url=%s err=%r", url, exc)
             self._send(502, {"error": f"{type(exc).__name__}: {exc}"})
@@ -119,9 +130,11 @@ def main() -> None:
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     addr = os.environ.get("FETCHER_ADDR", "0.0.0.0")
     port = int(os.environ.get("FETCHER_PORT", "8000"))
-    log.info("listening on %s:%d, allowed hosts=%s, token auth=%s", addr, port, sorted(ALLOWED_HOSTS),
-             "on" if TOKEN else "OFF")
-    HTTPServer((addr, port), Handler).serve_forever()
+    log.info("listening on %s:%d, allowed hosts=%s, token auth=%s, timezone=%s, locale=%s", addr, port,
+             sorted(ALLOWED_HOSTS), "on" if TOKEN else "OFF", TIMEZONE, LOCALE)
+    server = ThreadingHTTPServer((addr, port), Handler)
+    server.daemon_threads = True
+    server.serve_forever()
 
 
 if __name__ == "__main__":

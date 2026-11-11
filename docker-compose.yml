@@ -12,6 +12,9 @@ services:
     shm_size: 1gb # browsers need more than Docker's 64 MB default
     environment:
       FETCHER_ALLOWED_HOSTS: ${FETCHER_ALLOWED_HOSTS:-www.otto.de,otto.de}
+      # must match the country of the IP the fetcher uses (Kasada checks it)
+      FETCHER_TIMEZONE: ${FETCHER_TIMEZONE:-Europe/Berlin}
+      FETCHER_LOCALE: ${FETCHER_LOCALE:-de-DE}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     # not published: only the backend talks to it
 

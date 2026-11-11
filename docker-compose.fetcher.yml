@@ -20,6 +20,9 @@ services:
     environment:
       FETCHER_TOKEN: ${FETCHER_TOKEN:?set FETCHER_TOKEN (shared secret with the backend)}
       FETCHER_ALLOWED_HOSTS: ${FETCHER_ALLOWED_HOSTS:-www.otto.de,otto.de}
+      # must match the country of the IP the fetcher uses (Kasada checks it)
+      FETCHER_TIMEZONE: ${FETCHER_TIMEZONE:-Europe/Berlin}
+      FETCHER_LOCALE: ${FETCHER_LOCALE:-de-DE}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       # Bind only to the VPN interface so the fetcher is unreachable from LAN/internet.

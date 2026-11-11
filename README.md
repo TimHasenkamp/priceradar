@@ -65,6 +65,8 @@ otto.de's bot protection (Kasada) largely blocks **data-center IPs** such as Het
 
 If the home machine is off, checks fail as `transient` and are retried in the next cycle.
 
+**Timezone and locale matter.** Kasada flags a browser whose clock does not fit the exit IP, e.g. a UTC container behind a German IP: every request then gets the HTTP 400 challenge, which never resolves. The fetcher therefore sets the browser to `FETCHER_TIMEZONE=Europe/Berlin` and `FETCHER_LOCALE=de-DE` by default. Change both if the fetcher's IP is in another country.
+
 ## Local development
 
 Requirements: Go 1.26+, Node 24+, Python 3.12+ with [uv](https://docs.astral.sh/uv/).
@@ -110,6 +112,7 @@ All settings are environment variables; see [.env.example](.env.example).
 | `PR_FETCHER_URL` | `http://localhost:8000` | Fetcher sidecar |
 | `PR_FETCHER_TOKEN` | – | Shared secret, sent as `Authorization: Bearer …`. Must match `FETCHER_TOKEN` of the fetcher |
 | `LOG_LEVEL` / `LOG_FORMAT` | `info` / `json` | slog output |
+| `FETCHER_TIMEZONE` / `FETCHER_LOCALE` | `Europe/Berlin` / `de-DE` | Fetcher only: browser timezone and language. Must match the country of the fetcher's IP, see above |
 | `PR_GOTIFY_URL` / `PR_GOTIFY_TOKEN` | – | Gotify server and application token. Notifications are sent only if both are set; otherwise events are still logged as "übersprungen" |
 | `PR_PUBLIC_URL` | – | Public URL of the web UI, e.g. `https://priceradar.example`. Notifications then link to `/products/{id}`; without it they link to the shop |
 | `PR_NOTIFY_CHANGE_PCT` / `PR_NOTIFY_CHANGE_MIN_CENTS` | `5` / `100` | A price drop/rise is reported if it is at least this many percent **and** cents |
