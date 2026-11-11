@@ -1,0 +1,9 @@
+.git
+bin
+web
+fetcher
+docs
+testdata
+*.db
+*.db-*
+.env

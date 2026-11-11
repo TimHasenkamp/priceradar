@@ -1,0 +1,6 @@
+[project]
+name = "priceradar-fetcher"
+version = "0.1.0"
+description = "Stealth-browser HTML fetcher sidecar for PriceRadar"
+requires-python = ">=3.12"
+dependencies = ["scrapling[fetchers]==0.5.1"]

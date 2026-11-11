@@ -1,0 +1,13 @@
+# Override to build all images from source instead of pulling them:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+services:
+  fetcher:
+    build: ./fetcher
+    image: priceradar-fetcher:local
+  backend:
+    build: .
+    image: priceradar-backend:local
+  web:
+    build: ./web
+    image: priceradar-web:local

@@ -1,0 +1,47 @@
+# Production setup: pulls the prebuilt public images from GitHub Container Registry.
+#
+#   cp .env.example .env
+#   docker compose pull && docker compose up -d
+#
+# To build the images locally instead, see docker-compose.build.yml.
+
+services:
+  fetcher:
+    image: ghcr.io/timhasenkamp/priceradar-fetcher:${PRICERADAR_TAG:-latest}
+    restart: unless-stopped
+    shm_size: 1gb # browsers need more than Docker's 64 MB default
+    environment:
+      FETCHER_ALLOWED_HOSTS: ${FETCHER_ALLOWED_HOSTS:-www.otto.de,otto.de}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    # not published: only the backend talks to it
+
+  backend:
+    image: ghcr.io/timhasenkamp/priceradar-backend:${PRICERADAR_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PR_DB_PATH: /data/priceradar.db
+      PR_LISTEN_ADDR: ":8080"
+      PR_FETCHER_URL: http://fetcher:8000
+    volumes:
+      - priceradar-data:/data
+    depends_on:
+      fetcher:
+        condition: service_healthy
+
+  web:
+    image: ghcr.io/timhasenkamp/priceradar-web:${PRICERADAR_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://backend:8080
+      ORIGIN: ${ORIGIN:-http://localhost:3000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  priceradar-data:

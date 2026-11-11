@@ -1,0 +1,14 @@
+/bin/
+*.db
+*.db-*
+coverage.out
+.env
+
+# web
+web/node_modules/
+web/.svelte-kit/
+web/build/
+
+# fetcher
+fetcher/.venv/
+__pycache__/
